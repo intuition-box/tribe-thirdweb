@@ -16,6 +16,10 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "receive",
+    "stateMutability": "payable"
+  },
+  {
     "type": "function",
     "name": "BONDING_CURVE_PERCENT",
     "inputs": [],
@@ -69,19 +73,6 @@
   },
   {
     "type": "function",
-    "name": "FEE_PERCENT",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "HELD_PERCENT",
     "inputs": [],
     "outputs": [
@@ -108,7 +99,33 @@
   },
   {
     "type": "function",
+    "name": "MAX_FEE_PERCENT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_SUPPLY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_TRANSFER_FEE_PERCENT",
     "inputs": [],
     "outputs": [
       {
@@ -218,6 +235,19 @@
   },
   {
     "type": "function",
+    "name": "collectAndSplitTransferFees",
+    "inputs": [
+      {
+        "name": "tokenAddress",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "completeTokenLaunch",
     "inputs": [
       {
@@ -284,6 +314,38 @@
   },
   {
     "type": "function",
+    "name": "creatorTransferFeePercent",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "defaultPostMigrationTransferFeePercent",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "dexRouter",
     "inputs": [],
     "outputs": [
@@ -291,6 +353,19 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "feePercent",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -378,6 +453,25 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getLPTokenAddress",
+    "inputs": [
+      {
+        "name": "tokenAddress",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -501,6 +595,25 @@
   },
   {
     "type": "function",
+    "name": "getTransferFeePercent",
+    "inputs": [
+      {
+        "name": "tokenAddress",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getUserVolume",
     "inputs": [
       {
@@ -519,6 +632,25 @@
         "name": "sellVolume",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isTransferFeeEnabled",
+    "inputs": [
+      {
+        "name": "tokenAddress",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -572,11 +704,42 @@
     ],
     "outputs": [
       {
-        "name": "ethReceived",
+        "name": "paymentReceived",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setCreatorTransferFee",
+    "inputs": [
+      {
+        "name": "tokenAddress",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "transferFeePercent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDefaultPostMigrationTransferFeePercent",
+    "inputs": [
+      {
+        "name": "newTransferFeePercent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -587,6 +750,19 @@
         "name": "newDexRouter",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setFeePercent",
+    "inputs": [
+      {
+        "name": "newFeePercent",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -653,6 +829,25 @@
   },
   {
     "type": "function",
+    "name": "tokenLPToken",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "tokenTotalValueTraded",
     "inputs": [
       {
@@ -673,6 +868,25 @@
   {
     "type": "function",
     "name": "tokenUnlocked",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "transferFeeEnabled",
     "inputs": [
       {
         "name": "",
@@ -741,6 +955,31 @@
   },
   {
     "type": "event",
+    "name": "CreatorTransferFeeSet",
+    "inputs": [
+      {
+        "name": "tokenAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "transferFeePercent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "DEXRouterUpdated",
     "inputs": [
       {
@@ -754,6 +993,50 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FeePercentUpdated",
+    "inputs": [
+      {
+        "name": "oldFeePercent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newFeePercent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LPLocked",
+    "inputs": [
+      {
+        "name": "tokenAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "lpTokenAddress",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "lpAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -899,7 +1182,7 @@
         "internalType": "address"
       },
       {
-        "name": "ethAmount",
+        "name": "paymentAmount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -936,7 +1219,7 @@
         "internalType": "address"
       },
       {
-        "name": "ethAmount",
+        "name": "paymentAmount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -949,6 +1232,62 @@
       },
       {
         "name": "newPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TransferFeeCollected",
+    "inputs": [
+      {
+        "name": "tokenAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "from",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "feeAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creatorShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "launchpadShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TransferFeeEnabled",
+    "inputs": [
+      {
+        "name": "tokenAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "transferFeePercent",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -978,7 +1317,7 @@
   },
   {
     "type": "error",
-    "name": "MustSendETH",
+    "name": "MustSendPayment",
     "inputs": []
   },
   {

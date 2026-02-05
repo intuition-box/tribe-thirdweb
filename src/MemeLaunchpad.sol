@@ -98,9 +98,8 @@ contract MemeLaunchpad {
     event TokensSold(
         address indexed tokenAddress,
         address indexed seller,
-        uint256 paymentAmount,
         uint256 tokenAmount,
-        uint256 newPrice
+        uint256 paymentAmount
     );
 
     event TokenCompleted(
@@ -164,6 +163,17 @@ contract MemeLaunchpad {
         uint256 tokenAmount
     );
 
+    event SellSpreadPercentUpdated(
+        uint256 oldPercent,
+        uint256 newPercent
+    );
+
+    event TokenSellSpreadSet(
+        address indexed tokenAddress,
+        address indexed creator,
+        uint256 spreadPercent
+    );
+
     // ==================== CUSTOM ERRORS ====================
     
     error TokenLaunchCompleted();           // Token has reached max supply and completed
@@ -188,6 +198,7 @@ contract MemeLaunchpad {
     error InsufficientBalance();            // Contract doesn't have enough balance
     error SlippageTooHighSell();            // Received payment less than minimum expected
     error InsufficientTokenBalance();       // User doesn't have enough tokens
+    error SellSpreadExceedsMaximum();       // Sell spread percent exceeds maximum allowed
 
     // ==================== STRUCTS ====================
     
@@ -281,6 +292,18 @@ contract MemeLaunchpad {
     /// @notice Maximum allowed transfer fee percent (5%)
     uint256 public constant MAX_TRANSFER_FEE_PERCENT = 5;
 
+    /// @notice Maximum allowed sell spread percent (25%)
+    uint256 public constant MAX_SELL_SPREAD_PERCENT = 25;
+
+    /// @notice Sell spread percent: sellers receive (100 - sellSpreadPercent)% of par value; rest stays as liquidity (e.g. 10 = sell at 90%)
+    uint256 public sellSpreadPercent;
+
+    /// @notice Whether a token has a custom sell spread (if false, uses global sellSpreadPercent)
+    mapping(address => bool) public hasTokenSellSpread;
+
+    /// @notice Per-token sell spread percent (used when hasTokenSellSpread is true; 0 = no spread)
+    mapping(address => uint256) public tokenSellSpreadPercent;
+
     /// @notice Maps token address to its LP token address after DEX migration
     mapping(address => address) public tokenLPToken;
 
@@ -322,6 +345,7 @@ contract MemeLaunchpad {
         dexRouter = _dexRouter;
         feePercent = 2; // Initialize to 2% (200 basis points)
         defaultPostMigrationTransferFeePercent = 2; // Initialize to 2% transfer fee after migration (default)
+        sellSpreadPercent = 2; // Initialize to 2%: sellers receive 98% of par (configurable via setSellSpreadPercent)
     }
     
     // ==================== RECEIVE NATIVE CURRENCY ====================
@@ -379,6 +403,18 @@ contract MemeLaunchpad {
     }
 
     /**
+     * @notice Sets the sell spread percent (sell price = par * (100 - sellSpreadPercent) / 100)
+     * @dev E.g. 10% spread means sell at 90% of par; reduces drain of liquidity when users sell
+     * @param newSellSpreadPercent New sell spread percent (must be <= MAX_SELL_SPREAD_PERCENT)
+     */
+    function setSellSpreadPercent(uint256 newSellSpreadPercent) external onlyOwner {
+        if (newSellSpreadPercent > MAX_SELL_SPREAD_PERCENT) revert SellSpreadExceedsMaximum();
+        uint256 oldPercent = sellSpreadPercent;
+        sellSpreadPercent = newSellSpreadPercent;
+        emit SellSpreadPercentUpdated(oldPercent, newSellSpreadPercent);
+    }
+
+    /**
      * @notice Allows creator to set their own transfer fee for their token
      * @dev Can only be called by token creator, before migration
      * @param tokenAddress Address of the token
@@ -392,6 +428,23 @@ contract MemeLaunchpad {
         
         creatorTransferFeePercent[tokenAddress] = transferFeePercent;
         emit CreatorTransferFeeSet(tokenAddress, token.creator, transferFeePercent);
+    }
+
+    /**
+     * @notice Allows creator to set a custom sell spread for their token
+     * @dev Can only be called by token creator, before migration. If not set, global sellSpreadPercent is used.
+     * @param tokenAddress Address of the token
+     * @param spreadPercent Sell spread percent (must be <= MAX_SELL_SPREAD_PERCENT; e.g. 10 = sell at 90% of par)
+     */
+    function setTokenSellSpread(address tokenAddress, uint256 spreadPercent) external onlyValidToken(tokenAddress) {
+        TokenInfo memory token = tokenInfo[tokenAddress];
+        if (msg.sender != token.creator) revert InvalidInput();
+        if (token.completed) revert TokenLaunchCompleted();
+        if (spreadPercent > MAX_SELL_SPREAD_PERCENT) revert SellSpreadExceedsMaximum();
+        
+        hasTokenSellSpread[tokenAddress] = true;
+        tokenSellSpreadPercent[tokenAddress] = spreadPercent;
+        emit TokenSellSpreadSet(tokenAddress, token.creator, spreadPercent);
     }
 
     // ==================== TOKEN CREATION ====================
@@ -592,55 +645,121 @@ contract MemeLaunchpad {
      * @dev User must approve this contract to spend their tokens first
      *      Users receive back exactly what they contributed (1:1 return) based on their original purchase
      *      This prevents rug pulls by ensuring users get back their original investment proportionally
+     *      Tokens are burned from the seller's wallet
      * @param tokenAddress Address of the token to sell
      * @param tokenAmount Amount of tokens to sell
      * @param minPaymentOut Minimum native currency expected (slippage protection)
+     * @param payoutTo Optional address to receive payout (address(0) = seller receives payout)
      * @return paymentReceived Net native currency received after fees (proportional to original contribution)
      */
     function sellTokens(
         address tokenAddress,
         uint256 tokenAmount,
-        uint256 minPaymentOut
+        uint256 minPaymentOut,
+        address payoutTo
     ) external nonReentrant onlyValidToken(tokenAddress) returns (uint256 paymentReceived) {
         TokenInfo storage token = tokenInfo[tokenAddress];
         if (token.completed) revert TokenLaunchCompleted();
         if (tokenAmount == 0) revert MustSellTokens();
 
-        // Check user has sufficient token balance (verify before any calculations)
-        MemeToken tokenContract = MemeToken(payable(tokenAddress));
-        if (tokenContract.balanceOf(msg.sender) < tokenAmount) revert InsufficientTokenBalance();
+        // Calculate payment amounts using helper (par amount for accounting, amountToDistribute after spread)
+        (uint256 calculatedPayment, uint256 amountToDistribute) = _calculateSellPayment(tokenAddress, msg.sender, tokenAmount, minPaymentOut);
+        
+        // Process token operations and get net payment
+        uint256 netPayment = _processSellTokenOperations(
+            tokenAddress,
+            msg.sender,
+            tokenAmount,
+            calculatedPayment,
+            amountToDistribute
+        );
 
-        // Ensure sufficient circulating supply (must check before price calculation to prevent underflow)
-        if (token.currentSupply < tokenAmount) revert InsufficientCirculatingSupply();
-        if (token.currentSupply == 0) revert InsufficientCirculatingSupply();
+        // Process payout and update tracking using helper to reduce stack depth
+        _processSellPayout(tokenAddress, msg.sender, payoutTo, netPayment, amountToDistribute, tokenAmount);
+        
+        return netPayment;
+    }
+
+    // ==================== HELPER FUNCTIONS ====================
+    
+    /**
+     * @notice Calculates payment amount for selling tokens (with sell spread)
+     * @dev Sellers receive (100 - sellSpreadPercent)% of par; spread stays in token contract as liquidity
+     * @param tokenAddress Address of the token
+     * @param seller Address of the seller
+     * @param tokenAmount Amount of tokens to sell
+     * @param minPaymentOut Minimum payment expected (for slippage protection)
+     * @return calculatedPayment Gross payment at par (for user contribution accounting)
+     * @return amountToDistribute Amount actually taken from curve and paid to user (after spread)
+     */
+    function _calculateSellPayment(
+        address tokenAddress,
+        address seller,
+        uint256 tokenAmount,
+        uint256 minPaymentOut
+    ) private view returns (uint256 calculatedPayment, uint256 amountToDistribute) {
+        TokenInfo storage token = tokenInfo[tokenAddress];
+        MemeToken tokenContract = MemeToken(payable(tokenAddress));
+        
+        // Check user has sufficient token balance first (matches original behavior)
+        if (tokenContract.balanceOf(seller) < tokenAmount) revert InsufficientTokenBalance();
+
+        // Ensure sufficient circulating supply
+        if (token.currentSupply < tokenAmount || token.currentSupply == 0) {
+            revert InsufficientCirculatingSupply();
+        }
 
         // Verify user has purchased tokens (must have contribution to sell)
-        uint256 userPurchasedTokens = userTokenPurchases[tokenAddress][msg.sender];
+        uint256 userPurchasedTokens = userTokenPurchases[tokenAddress][seller];
         if (userPurchasedTokens == 0) revert NoTokensPurchased();
         if (tokenAmount > userPurchasedTokens) revert InsufficientTokenBalance();
         
-        // Calculate payment based on user's original contribution (1:1 return)
-        // This prevents rug pulls by ensuring users get back exactly what they put in
-        uint256 userContribution = userContributions[tokenAddress][msg.sender];
+        // Calculate payment at par (proportional contribution)
+        uint256 userContribution = userContributions[tokenAddress][seller];
         if (userContribution == 0) revert NoTokensPurchased();
         
-        // Calculate proportional contribution for tokens being sold
-        // calculatedPayment = (userContribution * tokenAmount) / userPurchasedTokens
-        uint256 calculatedPayment = (userContribution * tokenAmount) / userPurchasedTokens;
+        calculatedPayment = (userContribution * tokenAmount) / userPurchasedTokens;
         if (calculatedPayment == 0) revert MustSellTokens();
         
-        // Verify token contract has sufficient liquidity
-        if (tokenContract.getNativeBalance() < calculatedPayment) revert InsufficientBondingCurveLiquidity();
-
-        // Calculate fee and net payment
-        uint256 fee = (calculatedPayment * feePercent) / 100;
-        uint256 netPayment;
-        unchecked {
-            netPayment = calculatedPayment - fee;
+        // Apply sell spread: use per-token spread if set, else global default
+        uint256 spread = hasTokenSellSpread[tokenAddress] ? tokenSellSpreadPercent[tokenAddress] : sellSpreadPercent;
+        amountToDistribute = (calculatedPayment * (100 - spread)) / 100;
+        
+        // Verify token contract has sufficient liquidity for the amount we will pull
+        if (tokenContract.getNativeBalance() < amountToDistribute) {
+            revert InsufficientBondingCurveLiquidity();
         }
 
-        // Slippage protection: ensure net payment meets minimum requirement
+        // Fee and net payment based on amountToDistribute (what we actually pay out)
+        uint256 fee = (amountToDistribute * feePercent) / 100;
+        uint256 netPayment;
+        unchecked {
+            netPayment = amountToDistribute - fee;
+        }
+
+        // Slippage protection
         if (netPayment < minPaymentOut) revert SlippageTooHighSell();
+    }
+
+    /**
+     * @notice Processes token operations for selling (burning, transfers, supply updates)
+     * @dev Helper function to reduce stack depth in sellTokens. Only amountToDistribute is pulled from curve; spread stays in token contract.
+     * @param tokenAddress Address of the token
+     * @param seller Address of the seller
+     * @param tokenAmount Amount of tokens being sold
+     * @param calculatedPayment Gross payment at par (for user contribution accounting)
+     * @param amountToDistribute Amount to pull from token and pay to user (after sell spread)
+     * @return netPayment Net payment after fees
+     */
+    function _processSellTokenOperations(
+        address tokenAddress,
+        address seller,
+        uint256 tokenAmount,
+        uint256 calculatedPayment,
+        uint256 amountToDistribute
+    ) private returns (uint256 netPayment) {
+        TokenInfo storage token = tokenInfo[tokenAddress];
+        MemeToken tokenContract = MemeToken(payable(tokenAddress));
 
         // Update supply FIRST (before external calls) to prevent reentrancy issues
         unchecked {
@@ -648,56 +767,37 @@ contract MemeLaunchpad {
         }
 
         // Burn tokens from user (this will fail if allowance is insufficient)
-        tokenContract.burnFrom(msg.sender, tokenAmount);
+        tokenContract.burnFrom(seller, tokenAmount);
 
-        // TRUST FLOW AUDIT: Get native currency from token contract (each token holds its own liquidity)
-        // Transfer gross payment from token contract to launchpad first
-        if (!tokenContract.transferNative(payable(address(this)), calculatedPayment)) revert TransferFailed();
-
-        // TRUST FLOW AUDIT: Deduct from bonding curve liquidity (gross payment before fees)
-        // We deduct the full calculatedPayment from curveLiquidity because that's the gross amount
-        // we're paying out (netPayment + fee). This matches the accounting in buyTokens where
-        // we only add netPayment to curveLiquidity (after fee is removed).
-        unchecked {
-            curveLiquidity[tokenAddress] -= calculatedPayment;
+        // TRUST FLOW AUDIT: Get only amountToDistribute from token contract (spread stays as liquidity)
+        if (!tokenContract.transferNative(payable(address(this)), amountToDistribute)) {
+            revert TransferFailed();
         }
 
-        // Reduce tracked purchases and contributions (user sold tokens)
-        // Use helper function to reduce stack depth
-        _updateUserTrackingOnSell(tokenAddress, msg.sender, tokenAmount, userPurchasedTokens, calculatedPayment);
-
-        // TRUST FLOW AUDIT: Transfer net payment to user (after fee deduction)
-        (bool success, ) = payable(msg.sender).call{value: netPayment}("");
-        if (!success) revert TransferFailed();
-
-        // TRUST FLOW AUDIT: Transfer fee to treasury
-        (success, ) = payable(treasuryAddress).call{value: fee}("");
-        if (!success) revert TransferFailed();
-
-        // At this point:
-        // - Token contract sent to launchpad: calculatedPayment (gross, based on user's original contribution)
-        // - curveLiquidity decreased by: calculatedPayment (gross)
-        // - User received: netPayment (proportional to their original contribution, minus fee)
-        // - Treasury received: fee
-        // - Total paid out: netPayment + fee = calculatedPayment ✓
-        // - Token contract balance decreased by: calculatedPayment ✓
-        // - User contributions reduced proportionally ✓
-        // - User token purchases reduced proportionally ✓
-
-        // Update volume tracking (using net payment, not gross)
+        // TRUST FLOW AUDIT: Deduct only amountToDistribute from curve liquidity (spread remains in token)
         unchecked {
-            userVolumes[msg.sender].totalSellVolume += netPayment;
-            tokenTotalValueTraded[tokenAddress] += netPayment;
+            curveLiquidity[tokenAddress] -= amountToDistribute;
         }
 
-        // Note: currentPrice is not used for sell calculation anymore, but kept for event emission
-        // Calculate price inline to reduce stack depth
-        emit TokensSold(tokenAddress, msg.sender, netPayment, tokenAmount, _calculatePrice(token.currentSupply));
-        return netPayment;
+        // Reduce tracked purchases and contributions (use par amount for accounting)
+        uint256 userPurchasedTokens = userTokenPurchases[tokenAddress][seller];
+        if (tokenAmount >= userPurchasedTokens) {
+            delete userTokenPurchases[tokenAddress][seller];
+            delete userContributions[tokenAddress][seller];
+        } else {
+            unchecked {
+                userTokenPurchases[tokenAddress][seller] -= tokenAmount;
+                userContributions[tokenAddress][seller] -= calculatedPayment;
+            }
+        }
+
+        // Net payment = amountToDistribute minus fee
+        uint256 fee = (amountToDistribute * feePercent) / 100;
+        unchecked {
+            netPayment = amountToDistribute - fee;
+        }
     }
 
-    // ==================== HELPER FUNCTIONS ====================
-    
     /**
      * @notice Updates user tracking when tokens are sold
      * @dev Helper function to reduce stack depth in sellTokens
@@ -725,6 +825,51 @@ contract MemeLaunchpad {
                 userContributions[tokenAddress][user] -= calculatedPayment;
             }
         }
+    }
+
+    /**
+     * @notice Processes payout transfers and updates volume tracking for token sales
+     * @dev Helper function to reduce stack depth in sellTokens
+     * @param tokenAddress Address of the token
+     * @param seller Address of the seller
+     * @param payoutTo Optional payout address (address(0) = seller)
+     * @param netPayment Net payment amount after fees
+     * @param amountToDistribute Gross amount distributed (before fee, after spread)
+     * @param tokenAmount Amount of tokens sold
+     */
+    function _processSellPayout(
+        address tokenAddress,
+        address seller,
+        address payoutTo,
+        uint256 netPayment,
+        uint256 amountToDistribute,
+        uint256 tokenAmount
+    ) private {
+        // Fee = amountToDistribute - netPayment
+        uint256 fee;
+        unchecked {
+            fee = amountToDistribute - netPayment;
+        }
+
+        // Determine payout address: use payoutTo if provided, otherwise default to seller
+        address payoutAddress = payoutTo == address(0) ? seller : payoutTo;
+
+        // TRUST FLOW AUDIT: Transfer net payment to payout address (after fee deduction)
+        (bool success, ) = payable(payoutAddress).call{value: netPayment}("");
+        if (!success) revert TransferFailed();
+
+        // TRUST FLOW AUDIT: Transfer fee to treasury
+        (success, ) = payable(treasuryAddress).call{value: fee}("");
+        if (!success) revert TransferFailed();
+
+        // Update volume tracking (using net payment, not gross)
+        unchecked {
+            userVolumes[seller].totalSellVolume += netPayment;
+            tokenTotalValueTraded[tokenAddress] += netPayment;
+        }
+
+        // Emit minimal event
+        emit TokensSold(tokenAddress, seller, tokenAmount, netPayment);
     }
 
     /**

@@ -129,7 +129,7 @@ contract SellTokenTest is Test {
 
         // Sell tokens (minPaymentOut = 0 for testing, no slippage protection needed)
         vm.prank(buyer);
-        uint256 received = launchpad.sellTokens(tokenAddress, sellAmount, 0);
+        uint256 received = launchpad.sellTokens(tokenAddress, sellAmount, 0, address(0));
 
         // Verify basic functionality
         assertGt(received, 0);
@@ -168,7 +168,7 @@ contract SellTokenTest is Test {
                 sellAmount
             )
         );
-        launchpad.sellTokens(tokenAddress, sellAmount, 0);
+        launchpad.sellTokens(tokenAddress, sellAmount, 0, address(0));
     }
 
     function testSellTokensNoTokens() public {
@@ -181,7 +181,7 @@ contract SellTokenTest is Test {
 
         vm.prank(seller);
         vm.expectRevert(MemeLaunchpad.MustSellTokens.selector);
-        launchpad.sellTokens(tokenAddress, sellAmount, 0);
+        launchpad.sellTokens(tokenAddress, sellAmount, 0, address(0));
     }
 
     function testSellTokensExceedsCirculatingSupply() public {
@@ -206,6 +206,6 @@ contract SellTokenTest is Test {
         vm.prank(buyer);
         // User doesn't have 1e28 tokens, so will fail with InsufficientTokenBalance first
         vm.expectRevert(MemeLaunchpad.InsufficientTokenBalance.selector);
-        launchpad.sellTokens(tokenAddress, 1e28, 0);
+        launchpad.sellTokens(tokenAddress, 1e28, 0, address(0));
     }
 }

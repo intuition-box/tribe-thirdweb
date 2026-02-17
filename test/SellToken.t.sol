@@ -105,7 +105,7 @@ contract SellTokenTest is Test {
     function testSellTokens() public {
         // Create a token
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("SellToken", "ST", "Sell metadata");
+        address tokenAddress = launchpad.createToken("SellToken", "ST", "Sell metadata", 255);
 
         // Unlock the token first
         unlockToken(tokenAddress);
@@ -142,7 +142,7 @@ contract SellTokenTest is Test {
     function testSellTokensInsufficientAllowance() public {
         // Create a token
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("FailSellToken", "FST", "Fail metadata");
+        address tokenAddress = launchpad.createToken("FailSellToken", "FST", "Fail metadata", 255);
 
         // Unlock the token first
         unlockToken(tokenAddress);
@@ -174,7 +174,7 @@ contract SellTokenTest is Test {
     function testSellTokensNoTokens() public {
         // Create a token
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("NoSellToken", "NST", "No metadata");
+        address tokenAddress = launchpad.createToken("NoSellToken", "NST", "No metadata", 255);
 
         address seller = makeAddr("seller");
         uint256 sellAmount = 0;
@@ -187,7 +187,7 @@ contract SellTokenTest is Test {
     function testSellTokensExceedsCirculatingSupply() public {
         // Create a token
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("ExceedToken", "ET", "Exceed metadata");
+        address tokenAddress = launchpad.createToken("ExceedToken", "ET", "Exceed metadata", 255);
 
         // Unlock the token first
         unlockToken(tokenAddress);

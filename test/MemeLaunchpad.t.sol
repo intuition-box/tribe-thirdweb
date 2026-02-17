@@ -120,7 +120,7 @@ contract MemeLaunchpadTest is Test {
 
         // Create the token (no payment token needed - uses native currency)
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken(name, symbol, metadata);
+        address tokenAddress = launchpad.createToken(name, symbol, metadata, 255);
 
         // Verify the token was created and is valid
         assertTrue(launchpad.isValidToken(tokenAddress), "Token should be valid");
@@ -154,7 +154,7 @@ contract MemeLaunchpadTest is Test {
         string memory metadata = "Test metadata";
 
         vm.expectRevert(abi.encodeWithSelector(MemeLaunchpad.InvalidInput.selector));
-        launchpad.createToken(name, symbol, metadata);
+        launchpad.createToken(name, symbol, metadata, 255);
     }
 
     function testCreateTokenWithEmptySymbol() public {
@@ -163,16 +163,16 @@ contract MemeLaunchpadTest is Test {
         string memory metadata = "Test metadata";
 
         vm.expectRevert(abi.encodeWithSelector(MemeLaunchpad.InvalidInput.selector));
-        launchpad.createToken(name, symbol, metadata);
+        launchpad.createToken(name, symbol, metadata, 255);
     }
 
     function testMultipleTokens() public {
         // Create first token
-        address token1 = launchpad.createToken("Token1", "T1", "Metadata1");
+        address token1 = launchpad.createToken("Token1", "T1", "Metadata1", 255);
         assertTrue(launchpad.isValidToken(token1), "First token should be valid");
 
         // Create second token
-        address token2 = launchpad.createToken("Token2", "T2", "Metadata2");
+        address token2 = launchpad.createToken("Token2", "T2", "Metadata2", 255);
         assertTrue(launchpad.isValidToken(token2), "Second token should be valid");
 
         // Verify they are different
@@ -188,7 +188,7 @@ contract MemeLaunchpadTest is Test {
     function testBuyTokens() public {
         // Create a token
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("BuyToken", "BT", "Buy metadata");
+        address tokenAddress = launchpad.createToken("BuyToken", "BT", "Buy metadata", 255);
 
         // Unlock the token first
         unlockToken(tokenAddress);
@@ -223,7 +223,7 @@ contract MemeLaunchpadTest is Test {
     }
 
     function testBuyTokensInsufficientTRUST() public {
-        address tokenAddress = launchpad.createToken("FailToken", "FT", "Fail metadata");
+        address tokenAddress = launchpad.createToken("FailToken", "FT", "Fail metadata", 255);
         address buyer = makeAddr("buyer");
 
         // Don't give buyer any native currency
@@ -234,7 +234,7 @@ contract MemeLaunchpadTest is Test {
 
     function testBuyTokensSlippageTooHigh() public {
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("SlipToken", "ST", "Slip metadata");
+        address tokenAddress = launchpad.createToken("SlipToken", "ST", "Slip metadata", 255);
         
         // Unlock the token first
         unlockToken(tokenAddress);
@@ -254,7 +254,7 @@ contract MemeLaunchpadTest is Test {
     function testCompleteTokenLaunch() public {
         // Create a token
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("CompleteToken", "CT", "Complete metadata");
+        address tokenAddress = launchpad.createToken("CompleteToken", "CT", "Complete metadata", 255);
 
         // Unlock the token first
         unlockToken(tokenAddress);
@@ -342,7 +342,7 @@ contract MemeLaunchpadTest is Test {
     }
 
     function testCompleteTokenLaunchOnlyOwner() public {
-        address tokenAddress = launchpad.createToken("OwnerToken", "OT", "Owner metadata");
+        address tokenAddress = launchpad.createToken("OwnerToken", "OT", "Owner metadata", 255);
         address nonOwner = makeAddr("nonOwner");
 
         vm.prank(nonOwner);
@@ -355,7 +355,7 @@ contract MemeLaunchpadTest is Test {
     function testCreatorCanBuyWithinLimit() public {
         // Create token as creator
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("CreatorToken", "CT", "Creator metadata");
+        address tokenAddress = launchpad.createToken("CreatorToken", "CT", "Creator metadata", 255);
 
         // Calculate creator max buy: 20% of bonding curve (70% of 1B = 140M tokens)
         uint256 maxSupply = 1_000_000_000 * 1e18;
@@ -388,7 +388,7 @@ contract MemeLaunchpadTest is Test {
     function testCreatorCannotExceedBuyLimit() public {
         // Create token as creator
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("LimitToken", "LT", "Limit metadata");
+        address tokenAddress = launchpad.createToken("LimitToken", "LT", "Limit metadata", 255);
 
         // Calculate creator max buy: 140M tokens
         uint256 maxSupply = 1_000_000_000 * 1e18;
@@ -463,7 +463,7 @@ contract MemeLaunchpadTest is Test {
     function testCreatorBuyLimitTrackedAcrossMultiplePurchases() public {
         // Create token as creator
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("TrackToken", "TT", "Track metadata");
+        address tokenAddress = launchpad.createToken("TrackToken", "TT", "Track metadata", 255);
 
         // Calculate creator max buy: 140M tokens
         uint256 maxSupply = 1_000_000_000 * 1e18;
@@ -505,7 +505,7 @@ contract MemeLaunchpadTest is Test {
     function testNonCreatorNotAffectedByBuyLimit() public {
         // Create token as creator
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("PublicToken", "PT", "Public metadata");
+        address tokenAddress = launchpad.createToken("PublicToken", "PT", "Public metadata", 255);
 
         // Unlock the token first
         unlockToken(tokenAddress);
@@ -541,7 +541,7 @@ contract MemeLaunchpadTest is Test {
         
         // Create token as creator
         vm.prank(creator);
-        address tokenAddress = launchpad.createToken("BoundaryToken", "BT", "Boundary metadata");
+        address tokenAddress = launchpad.createToken("BoundaryToken", "BT", "Boundary metadata", 255);
 
         // Calculate creator max buy: 140M tokens
         uint256 maxSupply = 1_000_000_000 * 1e18;
@@ -615,10 +615,10 @@ contract MemeLaunchpadTest is Test {
     function testCreatorBuyLimitDifferentTokens() public {
         // Create two tokens as creator
         vm.prank(creator);
-        address tokenAddress1 = launchpad.createToken("Token1", "T1", "Metadata1");
+        address tokenAddress1 = launchpad.createToken("Token1", "T1", "Metadata1", 255);
         
         vm.prank(creator);
-        address tokenAddress2 = launchpad.createToken("Token2", "T2", "Metadata2");
+        address tokenAddress2 = launchpad.createToken("Token2", "T2", "Metadata2", 255);
 
         giveNativeCurrency(creator, 10000e18);
 

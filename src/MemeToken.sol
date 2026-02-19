@@ -26,6 +26,7 @@ contract MemeToken is ERC20, ERC20Burnable {
 
     function setLaunchpad(address _launchpad) external {
         require(launchpad == address(0), "Launchpad already set");
+        require(_launchpad != address(0), "Invalid launchpad");
         launchpad = _launchpad;
     }
 
@@ -45,11 +46,12 @@ contract MemeToken is ERC20, ERC20Burnable {
 
     /**
      * @notice Enables transfer fee after DEX migration
-     * @dev Can only be called by launchpad
+     * @dev Can only be called by launchpad. Fee must be <= 100 to avoid underflow in _update.
      * @param feePercent Transfer fee percentage (e.g., 2 = 2%)
      */
     function enableTransferFee(uint256 feePercent) external onlyLaunchpad {
         require(!transferFeeEnabled, "Transfer fee already enabled");
+        require(feePercent <= 100, "Fee exceeds 100%");
         transferFeeEnabled = true;
         transferFeePercent = feePercent;
     }

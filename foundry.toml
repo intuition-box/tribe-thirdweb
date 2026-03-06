@@ -14,7 +14,8 @@ via_ir = true
 # Solidity version
 solc_version = "0.8.24"
 
-# Use this profile when deployment hits "max code size exceeded" (smallest bytecode)
+# Use this profile when deployment hits "max code size exceeded" (smallest bytecode).
+# optimizer_runs = 1 minimizes deployed bytecode size to stay under EIP-170 limit (24576 bytes).
 [profile.deploy]
 src = "src"
 out = "out"
@@ -24,7 +25,7 @@ remappings = [
   "@openzeppelin/=lib/openzeppelin-contracts/"
 ]
 optimizer = true
-optimizer_runs = 50
+optimizer_runs = 1
 via_ir = true
 solc_version = "0.8.24"
 

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {MemeToken} from "./MemeToken.sol";
+import {DEXMigrationLib} from "./DEXMigrationLib.sol";
 
 /// @title MemeLaunchpad
 /// @notice Bonding curve launchpad for meme tokens. Users buy/sell before DEX migration; creators hold 30%, curve uses 70%.
@@ -23,11 +24,6 @@ interface IWETH {
     function approve(address,uint256) external returns (bool);
     function balanceOf(address) external view returns (uint256);
     function allowance(address,address) external view returns (uint256);
-}
-
-interface IDEXFactory {
-    function getPair(address,address) external view returns (address);
-    function createPair(address,address) external returns (address);
 }
 
 contract MemeLaunchpad {
@@ -83,6 +79,7 @@ contract MemeLaunchpad {
     mapping(address=>mapping(address=>uint256)) public creatorBoughtAmount; mapping(address=>bool) public tokenUnlocked;
     address public treasuryAddress; mapping(address=>UserVolume) public userVolumes;
     mapping(address=>uint256) public tokenTotalValueTraded; address public dexRouter;
+    address public immutable dexMigrationLib;
     uint256 public feePercent; uint256 public defaultPostMigrationTransferFeePercent;
     uint256 public sellSpreadPercent; mapping(address=>bool) public hasTokenSellSpread;
     mapping(address=>uint256) public tokenSellSpreadPercent; mapping(address=>address) public tokenLPToken;
@@ -91,9 +88,10 @@ contract MemeLaunchpad {
     mapping(address=>mapping(address=>uint256)) public userContributions;
 
     // --- Admin ---
-    constructor(address _treasury, address _router) {
+    constructor(address _treasury, address _router, address _dexLib) {
         if(_treasury==address(0))revert InvalidAddress();
-        _owner=msg.sender; _status=_NOT_ENTERED; treasuryAddress=_treasury; dexRouter=_router;
+        if(_dexLib==address(0))revert InvalidAddress();
+        _owner=msg.sender; _status=_NOT_ENTERED; treasuryAddress=_treasury; dexRouter=_router; dexMigrationLib=_dexLib;
         feePercent=2; defaultPostMigrationTransferFeePercent=2; sellSpreadPercent=2;
     }
 
@@ -175,9 +173,8 @@ contract MemeLaunchpad {
     }
 
     function _calculateSellPayment(address t,address seller,uint256 amount,uint256 minOut) private view returns(uint256 calcPay,uint256 toDist) {
-        MemeToken tc=MemeToken(payable(t));
+        if(MemeToken(payable(t)).balanceOf(seller)<amount)revert InsufficientTokenBalance();
         TokenInfo storage ti=tokenInfo[t];
-        if(tc.balanceOf(seller)<amount)revert InsufficientTokenBalance();
         if(ti.currentSupply<amount||ti.currentSupply==0)revert InsufficientCirculatingSupply();
         uint256 purchased=userTokenPurchases[t][seller];
         uint256 contrib=userContributions[t][seller];
@@ -185,21 +182,17 @@ contract MemeLaunchpad {
         if(amount>purchased)revert InsufficientTokenBalance();
         calcPay=(contrib*amount)/purchased;
         if(calcPay==0)revert MustSellTokens();
-        uint256 spread=hasTokenSellSpread[t] ? tokenSellSpreadPercent[t] : sellSpreadPercent;
-        toDist=(calcPay*(100-spread))/100;
+        toDist=(calcPay*(100-(hasTokenSellSpread[t]?tokenSellSpreadPercent[t]:sellSpreadPercent)))/100;
         if(curveLiquidity[t]<calcPay)revert InsufficientBondingCurveLiquidity();
-        if(tc.getNativeBalance()<toDist)revert InsufficientBondingCurveLiquidity();
-        uint256 fee=(toDist*feePercent)/100;
-        uint256 net; unchecked{ net=toDist-fee; }
-        if(net<minOut)revert SlippageTooHighSell();
+        if(MemeToken(payable(t)).getNativeBalance()<toDist)revert InsufficientBondingCurveLiquidity();
+        if(toDist-(toDist*feePercent)/100<minOut)revert SlippageTooHighSell();
     }
     // Spread: we pull toDist from token; curve is reduced by calcPay so (calcPay-toDist) stays in token as excess. _calculateSellPayment enforces curveLiquidity[t]>=calcPay.
     function _processSellTokenOps(address t,address seller,uint256 amount,uint256 calcPay,uint256 toDist) private returns(uint256 net) {
         TokenInfo storage ti=tokenInfo[t];
-        MemeToken tc=MemeToken(payable(t));
         unchecked{ ti.currentSupply-=amount; }
-        tc.burnFrom(seller,amount);
-        if(!tc.transferNative(payable(address(this)),toDist))revert TransferFailed();
+        MemeToken(payable(t)).burnFrom(seller,amount);
+        if(!MemeToken(payable(t)).transferNative(payable(address(this)),toDist))revert TransferFailed();
         unchecked{ curveLiquidity[t]-=calcPay; }
         uint256 purchased=userTokenPurchases[t][seller];
         if(amount>=purchased){
@@ -211,8 +204,7 @@ contract MemeLaunchpad {
                 userContributions[t][seller]-=calcPay;
             }
         }
-        uint256 fee=(toDist*feePercent)/100;
-        unchecked{ net=toDist-fee; }
+        unchecked{ net=toDist-(toDist*feePercent)/100; }
     }
 
     function _processSellPayout(address t,address seller,address payoutReceiver,uint256 net,uint256 toDist,uint256 amount) private {
@@ -228,10 +220,15 @@ contract MemeLaunchpad {
     }
 
     function _finalizeMigration(address t,MemeToken tc,address pair,address weth,uint256 liq) private {
-        address lp=_getLPToken(t,weth); if(lp==address(0)||lp!=pair)revert InvalidInput();
-        tokenLPToken[t]=lp; uint256 fee=creatorTransferFeePercent[t]!=0?creatorTransferFeePercent[t]:defaultPostMigrationTransferFeePercent;
-        tc.enableTransferFee(fee); transferFeeEnabled[t]=true; tokenInfo[t].heldTokens=0; curveLiquidity[t]=0;
-        emit LPLocked(t,lp,liq); emit TransferFeeEnabled(t,fee);
+        if(pair==address(0))revert InvalidInput();
+        tokenLPToken[t]=pair;
+        uint256 fee=creatorTransferFeePercent[t]!=0?creatorTransferFeePercent[t]:defaultPostMigrationTransferFeePercent;
+        tc.enableTransferFee(fee);
+        transferFeeEnabled[t]=true;
+        tokenInfo[t].heldTokens=0;
+        curveLiquidity[t]=0;
+        emit LPLocked(t,pair,liq);
+        emit TransferFeeEnabled(t,fee);
     }
 
     // --- Pricing: quadratic in supply. Buy uses excess=0; getCurrentPrice includes excess (sell-spread floor). ---
@@ -293,12 +290,32 @@ contract MemeLaunchpad {
 
     /// @notice Refund all users' native contributions (owner only). Tokens are not burned; holders keep receipt tokens (no further redemption after this).
     function emergencyWithdrawTokens(address t) external onlyOwner nonReentrant onlyValidToken(t) {
-        MemeToken tc=MemeToken(payable(t)); address[] memory holders=tokenHolders[t]; if(holders.length==0)revert NoTokensPurchased();
-        uint256 total; for(uint256 i;i<holders.length;){ uint256 c=userContributions[t][holders[i]]; if(c>0){ unchecked{total+=c;} } unchecked{i++;} }
-        if(total==0)revert NoTokensPurchased(); if(tc.getNativeBalance()<total)revert InsufficientBondingCurveLiquidity();
-        if(!tc.transferNative(payable(address(this)),total))revert TransferFailed(); unchecked{curveLiquidity[t]-=total;}
-        for(uint256 i;i<holders.length;){ address u=holders[i]; uint256 c=userContributions[t][u];
-            if(c>0){ uint256 tok=userTokenPurchases[t][u]; delete userTokenPurchases[t][u]; delete userContributions[t][u]; (bool ok,)=payable(u).call{value:c}(""); if(!ok)revert TransferFailed(); emit EmergencyWithdrawal(t,u,tok); } unchecked{i++;} }
+        address[] memory holders=tokenHolders[t];
+        if(holders.length==0)revert NoTokensPurchased();
+        uint256 total=_emergencyWithdrawTotal(t,holders);
+        if(total==0)revert NoTokensPurchased();
+        MemeToken tc=MemeToken(payable(t));
+        if(tc.getNativeBalance()<total)revert InsufficientBondingCurveLiquidity();
+        if(!tc.transferNative(payable(address(this)),total))revert TransferFailed();
+        unchecked{ curveLiquidity[t]-=total; }
+        for(uint256 i;i<holders.length;){ _emergencyWithdrawOne(t,holders[i]); unchecked{i++;} }
+    }
+    function _emergencyWithdrawTotal(address t,address[] memory holders) private view returns(uint256 total) {
+        for(uint256 i;i<holders.length;) {
+            uint256 c=userContributions[t][holders[i]];
+            if(c>0){ unchecked{ total+=c; } }
+            unchecked{ i++; }
+        }
+    }
+    function _emergencyWithdrawOne(address t,address u) private {
+        uint256 c=userContributions[t][u];
+        if(c==0)return;
+        uint256 tok=userTokenPurchases[t][u];
+        delete userTokenPurchases[t][u];
+        delete userContributions[t][u];
+        (bool ok,)=payable(u).call{value:c}("");
+        if(!ok)revert TransferFailed();
+        emit EmergencyWithdrawal(t,u,tok);
     }
 
     /// @notice Recover excess liquidity (sell spread) from token contract to treasury.
@@ -309,26 +326,24 @@ contract MemeLaunchpad {
         emit SellSpreadLiquidityRecovered(t,amt,treasuryAddress);
     }
 
-    // --- DEX Migration (wrap native → add liquidity → finalize) ---
+    // --- DEX Migration (wrap native → add liquidity via library → finalize) ---
     function _finalizeTokenCompletion(address t) internal { _migrateToDEX(t); }
 
-    function _getFactoryAndVerifyRouter() internal view returns(address f) {
-        address r=dexRouter; uint256 sz; assembly{sz:=extcodesize(r)} if(sz==0)revert InvalidAddress();
-        try IDEXRouter(dexRouter).factory() returns(address fa){ if(fa==address(0))revert InvalidAddress(); f=fa; }catch{ revert InvalidInput(); }
-    }
-    function _getOrCreatePair(address t,address w,address f) internal returns(address p) {
-        p=IDEXFactory(f).getPair(t,w);
-        if(p==address(0)){ try IDEXFactory(f).createPair(t,w) returns(address np){ if(np==address(0))revert InvalidInput(); p=np; } catch{ revert InvalidInput(); } }
-    }
     function _wrapNativeAndVerify(address w,uint256 amt) internal { IWETH(w).deposit{value:amt}(); if(IWETH(w).balanceOf(address(this))<amt)revert InsufficientBalance(); }
-    function _addLiquidityAndVerify(address t,address w,uint256 tokAmt,uint256 natAmt,MemeToken tc) internal returns(uint256) { _approveTokens(tc,tokAmt); _approveWETH(w,natAmt); return _addLiquidity(t,w,tokAmt,natAmt); }
 
     function _migrateToDEX(address t) internal {
-        MemeToken tc=MemeToken(payable(t)); uint256 tokAmt=tc.balanceOf(address(this)); uint256 natAmt=curveLiquidity[t];
-        if(tokAmt==0||natAmt==0||dexRouter==address(0))revert InvalidInput(); if(tc.getNativeBalance()<natAmt)revert InsufficientBalance();
-        if(!tc.transferNative(payable(address(this)),natAmt))revert TransferFailed(); if(address(this).balance<natAmt)revert InsufficientBalance();
-        address w=_getWETHAddress(); address f=_getFactoryAndVerifyRouter(); _wrapNativeAndVerify(w,natAmt);
-        address pair=_getOrCreatePair(t,w,f); uint256 liq=_addLiquidityAndVerify(t,w,tokAmt,natAmt,tc);
+        MemeToken tc=MemeToken(payable(t));
+        uint256 tokAmt=tc.balanceOf(address(this));
+        uint256 natAmt=curveLiquidity[t];
+        if(tokAmt==0||natAmt==0||dexRouter==address(0))revert InvalidInput();
+        if(tc.getNativeBalance()<natAmt)revert InsufficientBalance();
+        if(!tc.transferNative(payable(address(this)),natAmt))revert TransferFailed();
+        if(address(this).balance<natAmt)revert InsufficientBalance();
+        address w=_getWETHAddress();
+        _wrapNativeAndVerify(w,natAmt);
+        _approveTokens(tc,tokAmt);
+        _approveWETH(w,natAmt);
+        (address pair,uint256 liq)=_callDEXLibAddLiquidity(dexRouter,t,w,tokAmt,natAmt);
         _finalizeMigration(t,tc,pair,w,liq);
     }
 
@@ -339,8 +354,10 @@ contract MemeLaunchpad {
 
     /// @notice Manually complete token launch and migrate to DEX (owner only).
     function completeTokenLaunch(address t) external onlyOwner nonReentrant onlyValidToken(t) {
-        TokenInfo storage ti=tokenInfo[t]; require(!ti.completed,"Done"); ti.completed=true;
-        uint256 exc=_getExcessLiquidity(t); emit TokenCompleted(t,ti.currentSupply,_calculatePrice(ti.currentSupply,exc));
+        TokenInfo storage ti=tokenInfo[t];
+        require(!ti.completed,"Done");
+        ti.completed=true;
+        emit TokenCompleted(t,ti.currentSupply,_calculatePrice(ti.currentSupply,_getExcessLiquidity(t)));
         _finalizeTokenCompletion(t);
     }
 
@@ -348,16 +365,9 @@ contract MemeLaunchpad {
     function _approveTokens(MemeToken tc,uint256 amt) internal { if(tc.allowance(address(this),dexRouter)>0)tc.approve(dexRouter,0); tc.approve(dexRouter,amt); }
     function _approveWETH(address w,uint256 amt) internal { IWETH weth=IWETH(w); if(weth.allowance(address(this),dexRouter)>0)weth.approve(dexRouter,0); weth.approve(dexRouter,amt); }
 
-    function _addLiquidity(address t,address w,uint256 tokAmt,uint256 natAmt) internal returns(uint256 liq) {
-        uint256 minT=(tokAmt*99)/100; uint256 minW=(natAmt*99)/100; if(minT==0||minW==0)revert InvalidInput();
-        IWETH weth=IWETH(w); MemeToken tc=MemeToken(payable(t));
-        if(weth.balanceOf(address(this))<natAmt||weth.allowance(address(this),dexRouter)<natAmt)revert InvalidInput();
-        if(tc.balanceOf(address(this))<tokAmt||tc.allowance(address(this),dexRouter)<tokAmt)revert InvalidInput();
-        try IDEXRouter(dexRouter).addLiquidity(t,w,tokAmt,natAmt,minT,minW,address(this),block.timestamp+300) returns(uint256,uint256,uint256 l){ if(l==0)revert InvalidInput(); return l; }
-        catch{ revert InvalidInput(); }
-    }
-    function _getLPToken(address t,address w) internal view returns(address) {
-        address f; try IDEXRouter(dexRouter).factory() returns(address x){f=x;}catch{revert InvalidInput();}
-        if(f==address(0))revert InvalidAddress(); address p=IDEXFactory(f).getPair(t,w); if(p==address(0))revert InvalidInput(); return p;
+    function _callDEXLibAddLiquidity(address router,address token,address weth,uint256 tokAmt,uint256 natAmt) internal returns(address pair,uint256 liq) {
+        (bool ok,bytes memory r)=dexMigrationLib.delegatecall(abi.encodeWithSelector(DEXMigrationLib.addLiquidity.selector,router,token,weth,tokAmt,natAmt));
+        if(!ok)revert InvalidInput();
+        (pair,liq)=abi.decode(r,(address,uint256));
     }
 }

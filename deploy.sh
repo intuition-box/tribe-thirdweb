@@ -1,23 +1,65 @@
-#!/bin/bash
-# Deploy DEXMigrationLib first, then MemeLaunchpad with library linked.
-# Usage: TREASURY=0x... DEX_ROUTER=0x... ./deploy.sh
-# Or: ./deploy.sh 0xTREASURY 0xDEX_ROUTER
+#!/usr/bin/env bash
+# Deploy MemeLaunchpad using config from .env
+# Required in .env: TREASURY, DEX_ROUTER, PRIVATE_KEY, RPC_URL
+# Optional: CHAIN_ID, BLOCK_EXPLORER_URL
 
 set -e
-TREASURY=${1:-$TREASURY}
-ROUTER=${2:-$DEX_ROUTER}
-if [ -z "$TREASURY" ] || [ -z "$ROUTER" ]; then
-  echo "Usage: TREASURY=0x... DEX_ROUTER=0x... ./deploy.sh"
-  echo "   Or: ./deploy.sh 0xTREASURY 0xDEX_ROUTER"
-  exit 1
+cd "$(dirname "$0")"
+
+# Load .env (ignore comments and export vars)
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source <(grep -v '^#' .env | sed 's/^/export /')
+  set +a
 fi
 
-echo "Deploying DEXMigrationLib..."
-LIB=$(forge create src/DEXMigrationLib.sol:DEXMigrationLib 2>&1 | grep -oE '0x[a-fA-F0-9]{40}' | head -1)
-echo "DEXMigrationLib: $LIB"
+for var in TREASURY DEX_ROUTER PRIVATE_KEY RPC_URL; do
+  if [ -z "${!var}" ]; then
+    echo "Error: $var is not set. Add it to .env or export it."
+    exit 1
+  fi
+done
 
+# Ensure RPC_URL has a scheme
+if [[ ! "$RPC_URL" =~ ^https?:// ]]; then
+  RPC_URL="https://${RPC_URL}"
+fi
+
+echo "Network: RPC=$RPC_URL (CHAIN_ID=${CHAIN_ID:-not set})"
+echo "Treasury: $TREASURY"
+echo "DEX Router: $DEX_ROUTER"
+echo "Deploying DEXMigrationLib..."
+LIB_OUT=$(forge create src/DEXMigrationLib.sol:DEXMigrationLib \
+  --rpc-url "$RPC_URL" \
+  --private-key "$PRIVATE_KEY" 2>&1)
+LIB=$(echo "$LIB_OUT" | grep -oE 'Deployed to: 0x[a-fA-F0-9]{40}' | head -1 | awk '{print $3}')
+[ -z "$LIB" ] && LIB=$(echo "$LIB_OUT" | grep -oE '0x[a-fA-F0-9]{40}' | head -1)
+if [ -z "$LIB" ]; then echo "$LIB_OUT"; exit 1; fi
+echo "DEXMigrationLib at: $LIB"
 echo "Deploying MemeLaunchpad..."
-forge create src/MemeLaunchpad.sol:MemeLaunchpad \
-  --libraries src/DEXMigrationLib.sol:DEXMigrationLib:$LIB \
-  --constructor-args $TREASURY $ROUTER
-echo "Done."
+
+DEPLOYED=$(forge create src/MemeLaunchpad.sol:MemeLaunchpad \
+  --rpc-url "$RPC_URL" \
+  --private-key "$PRIVATE_KEY" \
+  --constructor-args "$TREASURY" "$DEX_ROUTER" "$LIB" \
+  2>&1)
+
+LAUNCHPAD=$(echo "$DEPLOYED" | grep -oE 'Deployed to: 0x[a-fA-F0-9]{40}' | head -1 | awk '{print $3}')
+if [ -z "$LAUNCHPAD" ]; then
+  LAUNCHPAD=$(echo "$DEPLOYED" | grep -oE '0x[a-fA-F0-9]{40}' | head -1)
+fi
+
+if [ -n "$LAUNCHPAD" ]; then
+  echo ""
+  echo "MemeLaunchpad deployed to: $LAUNCHPAD"
+  if [ -n "$BLOCK_EXPLORER_URL" ]; then
+    if [[ ! "$BLOCK_EXPLORER_URL" =~ ^https?:// ]]; then
+      BLOCK_EXPLORER_URL="https://${BLOCK_EXPLORER_URL}"
+    fi
+    echo "Explorer: ${BLOCK_EXPLORER_URL}/address/${LAUNCHPAD}"
+  fi
+else
+  echo "$DEPLOYED"
+  exit 1
+fi

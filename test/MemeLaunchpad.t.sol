@@ -63,8 +63,12 @@ contract MemeLaunchpadTest is Test {
             abi.encode(address(weth))
         );
         
-        // Deploy launchpad (WETH address is now obtained from router)
-        launchpad = new MemeLaunchpad(treasury, dexRouter);
+        // Deploy DEXMigrationLib and etch to fixed address; MemeLaunchpad calls it via delegatecall
+        address lib = deployCode("src/DEXMigrationLib.sol:DEXMigrationLib");
+        vm.etch(address(0x0000000000000000000000000000000000000100), lib.code);
+        
+        // Deploy launchpad with library address (launchpad will delegatecall to it)
+        launchpad = new MemeLaunchpad(treasury, dexRouter, address(0x0000000000000000000000000000000000000100));
     }
 
     // Helper function to unlock a token by having the creator buy enough tokens

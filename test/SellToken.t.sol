@@ -6,6 +6,7 @@ import "../src/MemeLaunchpad.sol";
 import "../src/MemeToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 // Mock TRUST token for testing
 contract MockTrustToken is ERC20 {
@@ -64,8 +65,11 @@ contract SellTokenTest is Test {
             abi.encode(address(weth))
         );
         
-        // Deploy launchpad (WETH address is now obtained from router)
-        launchpad = new MemeLaunchpad(treasury, dexRouter);
+        // Deploy DEXMigrationLib and etch to fixed address; MemeLaunchpad calls it via delegatecall
+        address lib = deployCode("src/DEXMigrationLib.sol:DEXMigrationLib");
+        vm.etch(address(0x0000000000000000000000000000000000000100), lib.code);
+        
+        launchpad = new MemeLaunchpad(treasury, dexRouter, address(0x0000000000000000000000000000000000000100));
     }
 
     // Helper function to unlock a token by having the creator buy enough tokens
@@ -162,7 +166,7 @@ contract SellTokenTest is Test {
         vm.prank(seller);
         vm.expectRevert(
             abi.encodeWithSelector(
-                0xfb8f41b2, // ERC20InsufficientAllowance selector
+                IERC20Errors.ERC20InsufficientAllowance.selector,
                 address(launchpad),
                 0,
                 sellAmount

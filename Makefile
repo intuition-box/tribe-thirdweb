@@ -1,8 +1,15 @@
 -include .env
 
-# Thirdweb CLI runs `forge` in a subprocess; npx can inherit a minimal PATH where forge isn't found, causing "Command 'f'... is not valid JSON".
-# Prepend the directory containing forge to PATH so the deploy step sees it.
+# Thirdweb CLI spawns `forge`; npx often doesn't see Foundry in PATH -> "Command 'forge' not found" gets parsed as JSON -> error.
+# Use a script that puts forge's directory on PATH before running thirdweb.
 deploy:
-	@command -v forge >/dev/null 2>&1 || { echo "Error: forge not found. Install Foundry: curl -L https://foundry.paradigm.xyz | bash && foundryup"; exit 1; }
-	forge build
-	PATH="$$(dirname $$(command -v forge)):$$PATH" npx thirdweb deploy -k $(THIRD_WEB_API_KEY)
+	npx thirdweb deploy -k $(THIRD_WEB_API_KEY)
+
+# Deploy MemeLaunchpad via Foundry script (script/Deploy.s.sol); uses .env for TREASURY, DEX_ROUTER, PRIVATE_KEY, RPC_URL
+deploy-foundry:
+	@chmod +x scripts/run-deploy-foundry.sh 2>/dev/null || true
+	./scripts/run-deploy-foundry.sh
+
+# Run tests (MemeLaunchpad uses DEXMigrationLib via delegatecall; tests deploy lib to 0x100 and pass to constructor)
+test:
+	forge test
